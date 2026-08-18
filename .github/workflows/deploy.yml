@@ -1,0 +1,60 @@
+name: FastAPI Docker CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check Docker version
+        run: docker --version
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region us-east-1 | \
+          docker login \
+          --username AWS \
+          --password-stdin \
+          891377017591.dkr.ecr.us-east-1.amazonaws.com
+
+      - name: Build Docker image
+        run: |
+          docker build -t fastapi-image .
+
+      - name: Tag Docker image
+        run: |
+          docker tag fastapi-image:latest \
+          891377017591.dkr.ecr.us-east-1.amazonaws.com/docker-images:latest
+
+      - name: Push Docker image
+        run: |
+          docker push \
+          891377017591.dkr.ecr.us-east-1.amazonaws.com/docker-images:latest
+
+      - name: Deploy to EC2 using SSM
+        run: |
+          aws ssm send-command \
+            --instance-ids "i-0fe7079ff8662af80" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy FastAPI Docker container" \
+            --parameters 'commands=[
+              "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 891377017591.dkr.ecr.us-east-1.amazonaws.com",
+              "docker pull 891377017591.dkr.ecr.us-east-1.amazonaws.com/docker-images:latest",
+              "docker rm -f fastapi-app || true",
+              "docker run -d --name fastapi-app -p 8000:5000 891377017591.dkr.ecr.us-east-1.amazonaws.com/docker-images:latest",
+              "docker ps"
+            ]'
